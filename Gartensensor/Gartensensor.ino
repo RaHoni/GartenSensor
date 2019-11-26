@@ -3,10 +3,13 @@
 #include <PubSubClient.h>
 
 //Festlegen aller Ein-/Ausgänge
-#define dhtInputPin 12
-#define soilPin 14
-#define rainPin 5
-#define soilRainInputPin A0
+//#define soilPin 14
+//#define rainPin 5
+
+#define sensorPin D1
+#define dhtInputPin D6
+#define rainInputPin D7
+#define soilInputPin A0
 
 //Passwörter und Daten für MQTT
 #define ssid ""
@@ -15,7 +18,7 @@
 
 //Definition der Variablen
 int counter = 0;
-float humidity, temperature, soildeHum, rain, Soil, Rain, SoilHum;
+float humidity, temperature, soildeHum, rain, SoilHum;
 DHTesp dht;
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -67,24 +70,20 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 
 void reconnect() {
-  // Loop until we're reconnected
   while (!client.connected()) {
     Serial.print("Faded! I'm looking for my broker. Do you know where he is? Please call me! ");
-    // Create a random client ID
-    String clientId = "ESP8266Client-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (client.connect(clientId.c_str())) {
-      Serial.println("Now we're in love! I found him.");
-      // Once connected, publish an announcement...
-      client.publish("status", "Hello, can you hear me?!");
-      // ... and resubscribe
-      client.subscribe("test");
+    if (client.connect("ESP-Garten")) {
+      Serial.println("I found him!");
+      client.publish("Garten/Sensor/status", "");
+      client.publish("Garten/Sensor/humidity", "");
+      client.publish("Garten/Sensor/rain", "");
+      client.publish("Garten/Sensor/soildry", "");
+      client.publish("Garten/Sensor/soilhum", "");
+      client.publish("Garten/Sensor/temperature", "");
     } else {
       Serial.print("I couldn't find him! :( I think it's error ");
       Serial.print(client.state());
-      Serial.println("I need a break! Let my dry my eyes.");
-      // Wait 5 seconds before retrying
+      Serial.println(" I need a break! Let my dry my eyes.");
       delay(5000);
     }
   }
@@ -93,151 +92,141 @@ void reconnect() {
 void setup() {
   pinMode(BUILTIN_LED, OUTPUT);     // Initialize the BUILTIN_LED pin as an output
   dht.setup(dhtInputPin, DHTesp::DHT11);
-  pinMode(soilPin, OUTPUT);
-  pinMode(rainPin, OUTPUT);
+  pinMode(sensorPin, OUTPUT);
+  pinMode(soilInputPin, INPUT);
+  pinMode(rainInputPin, INPUT);
+
   Serial.begin(115200);
-  
   setup_wifi();
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
 }
-
-//void setup() {
-//  Serial.begin(115200);
-//  Serial.println();
-//  dht.setup(dhtInputPin, DHTesp::DHT11);
-//  pinMode(soilPin, OUTPUT);
-//  pinMode(rainPin, OUTPUT);
-//  Serial.println("GartenSensor - by Maximilian Inckmann");
-//  delay(10);
-//  // We start by connecting to a WiFi network
-//  Serial.println();
-//  Serial.print("Versuche mich mit WLAN zu verbinden:  Netzwerkname: ");
-//  Serial.println(ssid);
-//  WiFi.begin(ssid, password);
-//  while (WiFi.status() != WL_CONNECTED) {
-//    delay(500);
-//    Serial.print(".");
-//  }
-//  randomSeed(micros());
-//  Serial.println("");
-//  Serial.println("Ich habe mich erfolgreich verbunden!");
-//  Serial.println("Meine lokale IP-Adresse lautet: ");
-//  Serial.println(WiFi.localIP());
-//  Serial.print("Verbinde mit MQTT Server ....");
-//  //client.begin("192.168.178.23", WiFiclient);
-//  conn();
-//}
 void loop() {
-  //Alles klarmachen -> Setup für jeden Durchlauf
-  toggle();
-  delay(dht.getMinimumSamplingPeriod() + 2000);
-  client.loop();
+
+  digitalWrite(sensorPin, HIGH);
+  //delay(dht.getMinimumSamplingPeriod() + 2000);
   if (!client.connected()) {
-    conn();
+    reconnect();
   }
+  client.loop();
+
   //Werte holen
   humidity = dht.getHumidity();
   temperature = dht.getTemperature();
-  if (counter == 0) {
-    for (int i = 0; i < 600; i++) {
-      if (analogRead(A0) >= ! Soil + 50) soildeHum += analogRead(A0);
-      if (analogRead(A0) <= ! Soil - 50) soildeHum += analogRead(A0);
-      delay(200);
-    }
-    soildeHum /= 600;
+  for (int i = 0; i < 600; i++) {
+    if (analogRead(soilInputPin) >= ! soildeHum + 50) soildeHum += analogRead(soilInputPin);
+    if (analogRead(soilInputPin) <= ! soildeHum - 50) soildeHum += analogRead(soilInputPin);
+    delay(20);
   }
-  else if (counter == 1) {
-    for (int i = 0; i < 600; i++) {
-      rain += analogRead(A0);
-      delay(200);
-    }
-    rain /= 600;
+  soildeHum /= 600;
+
+  for (int i = 0; i < 600; i++) {
+    rain += digitalRead(rainInputPin);
+    delay(20);
   }
+  rain /= 600;
+
   //Werte verarbeiten
   calculate();
-  output();
-}
-void conn() {
-  while (!client.connect("nodemcu", "try", "try")) {
-    Serial.print(".");
-  }
-
-  Serial.println("\nconnected!");
-  client.subscribe("nodemcu");
-}
-void calculate() {      //Werte der Sensoren durch Rechnung in Prozent
-  int differenz = 1024 - (soildeHum + rain);
-  if (differenz > 0) {
-    if (soildeHum > 512) {
-      Soil = soildeHum / (1 + ((soildeHum - 512) / soildeHum));
-    }
-    if (rain > 512) {
-      Rain = rain / (1 + ((rain - 512) / rain));
-    }
-    else if (soildeHum < 512) {
-      Soil = soildeHum * (1 + ((soildeHum - 512) / soildeHum));
-    }
-    else if (rain < 512) {
-      Rain = rain * (1 + ((rain - 512) / rain));
-    }
-  }
-  //Berechnung der Bodenfeuchte in Prozent
-  Soil /= 512;
-  Soil *= 100;
-  //Berechnung der Bodentrockenheit in Prozent
-  SoilHum = 100 - Soil;
-  //Berechnung der Regenstärke in Prozent
-  Rain /= 512;
-  Rain *= 100;
-}
-void toggle() {         //Schalten der Sensoren
-  if (counter == 1) {
-    counter = 0;
-    digitalWrite(rainPin, LOW);
-    delay(1000);
-    digitalWrite(soilPin, HIGH);
-  }
-  else if (counter == 0) {
-    counter = 1;
-    digitalWrite(soilPin, LOW);
-    delay(1000);
-    digitalWrite(rainPin, HIGH);
-  }
-}
-void output() {         //Ausgabe der Ergebnisse
   if (dht.getStatusString() != "TIMEOUT") {
     Serial.print("Status: ");
     Serial.print(dht.getStatusString());
-    client.publish("GartenSensor/status", dht.getStatusString());
+    client.publish("Garten/Sensor/status", dht.getStatusString());
 
     Serial.println("\t");
     Serial.print("Luftfeuchtigkeit: ");
     Serial.print(humidity, 1);
-    //client.publish("GartenSensor/humidity", char*(humidity));
+    snprintf (msg, 50, "test", humidity);
+    client.publish("Garten/Sensor/humidity", msg);
 
     Serial.print("%");
     Serial.println("\t\t");
     Serial.print("Temperatur: ");
     Serial.print(temperature, 1);
-    client.publish("GartenSensor/temperature", temperature.toString());
+    snprintf (msg, 50, "test", temperature);
+    client.publish("Garten/Sensor/temperature", msg);
 
     Serial.print("°C");
     Serial.println("\t\t");
     Serial.print("Bodentrockenheit: ");
-    Serial.print(SoilHum, 1);
-    client.publish("GartenSensor/soildry", (String)SoilHum);
+    Serial.print(soildeHum, 1);
+    snprintf (msg, 50, "test", soildeHum);
+    client.publish("Garten/Sensor/soildry", msg);
 
     Serial.println("\t\t");
     Serial.print("Bodenfeuchtigkeit: ");
-    Serial.print(Soil, 1);
-    client.publish("GartenSensor/soilhum", (String)Soil);
+    Serial.print(SoilHum, 1);
+    snprintf (msg, 50, "test", SoilHum);
+    client.publish("Garten/Sensor/soilhum", msg);
 
     Serial.print("%");
     Serial.println("\t\t");
     Serial.print("Regenstärke: ");
-    Serial.print(Rain, 1);
-    client.publish("GartenSensor/rain", (String)humidity);
+    Serial.print(rain, 1);
+    snprintf (msg, 50, "test", rain);
+    client.publish("Garten/Sensor/rain", msg);
+
+    Serial.print("%");
+    Serial.println();
+    Serial.println();
+    Serial.println();
+    Serial.println();
+  }
+  //output();
+}
+void calculate() {      //Werte der Sensoren durch Rechnung in Prozent
+
+  //Berechnung der Bodenfeuchte in Prozent
+  soildeHum /= 1024;
+  soildeHum *= 100;
+  if (soildeHum <= 0) soildeHum = 0;
+  if (soildeHum >= 100) soildeHum = 100;
+  //Berechnung der Bodentrockenheit in Prozent
+  SoilHum = 100 - soildeHum;
+  //Berechnung der Regenstärke in Prozent
+  rain *= 100;
+  rain = 100 - rain;
+  if (rain <= 0) rain = 0;
+  if (rain >= 100) rain = 100;
+}
+void output() {         //Ausgabe der Ergebnisse
+  if (dht.getStatusString() != "TIMEOUT") {
+    Serial.print("Status: ");
+    Serial.print(dht.getStatusString());
+    client.publish("Garten/Sensor/status", dht.getStatusString());
+
+    Serial.println("\t");
+    Serial.print("Luftfeuchtigkeit: ");
+    Serial.print(humidity, 1);
+    snprintf (msg, 50, "test", humidity);
+    client.publish("Garten/Sensor/humidity", msg);
+
+    Serial.print("%");
+    Serial.println("\t\t");
+    Serial.print("Temperatur: ");
+    Serial.print(temperature, 1);
+    snprintf (msg, 50, "test", temperature);
+    client.publish("Garten/Sensor/temperature", msg);
+
+    Serial.print("°C");
+    Serial.println("\t\t");
+    Serial.print("Bodentrockenheit: ");
+    Serial.print(soildeHum, 1);
+    snprintf (msg, 50, "test", soildeHum);
+    client.publish("Garten/Sensor/soildry", msg);
+
+    Serial.println("\t\t");
+    Serial.print("Bodenfeuchtigkeit: ");
+    Serial.print(SoilHum, 1);
+    snprintf (msg, 50, "test", SoilHum);
+    client.publish("Garten/Sensor/soilhum", msg);
+
+    Serial.print("%");
+    Serial.println("\t\t");
+    Serial.print("Regenstärke: ");
+    Serial.print(rain, 1);
+    snprintf (msg, 50, "test", rain);
+    client.publish("Garten/Sensor/rain", msg);
 
     Serial.print("%");
     Serial.println();
