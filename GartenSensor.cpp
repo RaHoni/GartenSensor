@@ -9,7 +9,7 @@
 #define soilRainInputPin A0
 
 //Passwörter und Daten für MQTT
-#define ssid "
+#define ssid ""
 #define password ""
 #define mqtt_server "192.168.178.23"
 
